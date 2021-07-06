@@ -72,12 +72,43 @@ class PhotoTweet:
         # get all the tweet info
         pass
 
-class User:
-    def __init__(self, id, distance):
-        self.id = id
-        self.distance = distance
+class UserFactory:
+    def __init__(self):
+        self.all_users = {}
 
-    def get_photo_tweets(self):
+    def get_user(self, id):
+        if id in self.all_users:
+            return self.all_users[id]
+        else:
+            u = User(id)
+            self.all_users[id] = u
+            return u
+
+    def bulk_populate(self, ids=None, users=None):
+        if not ids and not users:
+            users = self.all_users.values()[:100] # todo: filter this if it ever matters
+
+        if not ids:
+            ids = [x.id for x in users]
+
+        params = {
+            'ids': ','.join(ids)
+        }
+        path = 'users?ids={}'.format(','.join(ids))
+        user_data = make_authorized_request(path)
+
+        for user in user_data['data']:
+            self.all_users[user['id']].set_data(user)
+
+class User:
+    def __init__(self, id, data=None):
+        self.id = id
+        self.data = None
+
+    def set_data(self, data):
+        self.data = data
+
+    def get_photos(self):
         params = {
             'max_results': 100,
             'exclude' : 'retweets',
@@ -86,9 +117,21 @@ class User:
         }
         path = 'users/{}/tweets?{}'.format(self.id, urllib.parse.urlencode(params))
         tweets_json = make_authorized_request(path)
+        photos = []
+        media_map = None
         for tweet in tweets_json['data']:
             if ('attachments' in tweet) and ('media_keys' in tweet['attachments']):
-                print(json.dumps(tweet))
+                if not media_map:
+                    media_map = {}
+                    for media in tweets_json['includes']['media']:
+                        if media['type'] == 'photo':
+                            media_map[media['media_key']] = media
+                
+                for media_key in tweet['attachments']['media_keys']:
+                    if media_key in media_map:
+                        photos.append(media_map[media_key])
+
+        return photos
 
     def get_friend_ids(self):
         params = {
@@ -103,18 +146,19 @@ class User:
             return []
 
 class FollowGraph:
-    def __init__(self, root_user):
+    def __init__(self, root_user, user_factory):
         self.root_user = root_user
         self.queue = [root_user.id]
         self.edges = {}
         self.all_ids = set()
+        self.user_factory = user_factory
 
     def populate(self):
         total_processed = 0
         while self.queue and (total_processed < 45):
             total_processed += 1
             print("%d" % total_processed)
-            u = User(self.queue.pop(), 1)
+            u = self.user_factory.get_user(self.queue.pop())
             friends = u.get_friend_ids()
             self.queue += friends
             self.edges[u.id] = friends
@@ -125,10 +169,9 @@ class FollowGraph:
                 follower_counts[friend] += 1
 
         self.follower_counts = list(reversed(sorted(follower_counts.items(), key=lambda item: item[1])))
-        print(json.dumps(self.top_n(10)))
 
     def top_n(self, n):
-        return [x[0] for x in self.follower_counts[:n]]
+        return [self.user_factory.get_user(x[0]) for x in self.follower_counts[:n]]
 
 class RootUser:
     def __init__(self, name):
@@ -138,7 +181,7 @@ class RootUser:
     def populate(self):
         json_response = make_authorized_request('users/by?usernames={}'.format(self.name))
         id = json_response['data'][0]['id']
-        u = User(id, 0)
+        u = User(id)
         return u
 
 class UserGraph:
@@ -174,18 +217,35 @@ def create_tweet_url():
     url = "https://api.twitter.com/2/tweets?ids=1410202992817496071&expansions=attachments.media_keys&media.fields=duration_ms,height,media_key,preview_image_url,public_metrics,type,url,width"
     return url
 
-
-
 def main():
     load_cache()
 
     ru = RootUser('moishelettvin')
     u = ru.populate()
 
-    fg = FollowGraph(u)
+    uf = UserFactory()
+
+    fg = FollowGraph(u, uf)
     fg.populate()
 
+    users = fg.top_n(10)
+
+    uf.bulk_populate(users=users)
+
+    photo_data = []
+    for u in users:
+        photos = u.get_photos()
+        for photo in photos:
+            photo_data.append({
+                'photo': photo,
+                'user': u.data
+            })
+
+    f = open('photos.json', 'w')
+    json.dump(photo_data, f, indent=2)
+
     save_cache()
+
 
 if __name__ == "__main__":
     main()

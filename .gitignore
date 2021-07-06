@@ -106,5 +106,9 @@ dist
 # python stuff
 env
 
+# vscode stuff
+.vscode
+
 #project stuff
 cache.json
+photos.json
