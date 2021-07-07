@@ -11,15 +11,15 @@ function calcScore(tweet) {
 }
 
 function multiplierForScore(score) {
-  return Math.floor(Math.log(score));
+  return Math.log(score);
 }
 
 function maxWidthForScore(score) {
-  return MAX_WIDTH * multiplierForScore(score);
+  return Math.floor(MAX_WIDTH * multiplierForScore(score));
 }
 
 function maxHeightForScore(score) {
-  return MAX_HEIGHT * multiplierForScore(score);
+  return Math.floor(MAX_HEIGHT * multiplierForScore(score));
 }
 
 function calcWidth(photo, tweet) {

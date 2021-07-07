@@ -1,6 +1,11 @@
 from collections import defaultdict
+from PIL import Image
+
 import json
+import math
 import os
+import random
+import string
 import time
 import urllib.parse
 import requests
@@ -12,12 +17,14 @@ cache = {}
 
 def load_cache():
     global cache
-    f = open('cache.json')
-    if f:
-        cache = json.load(f)
-        print(json.dumps(cache))
-    else:
-        print('cache file not found')
+    try:
+        f = open('cache.json')
+        if f:
+            cache = json.load(f)
+        else:
+            print('cache file not found')
+    except FileNotFoundError:
+        cache = {}
 
 def save_cache():
     global cache
@@ -41,7 +48,7 @@ def connect_to_endpoint(url, headers):
     backoff = 15
     while tries < MAX_TRIES:
         # this is janky, but I want to throttle responses even before we get a 429
-        time.sleep(backoff)
+        #time.sleep(backoff)
         response = requests.request("GET", url, headers=headers)
         if response.status_code == 200:
             cache[url] = response.json()
@@ -62,16 +69,11 @@ def connect_to_endpoint(url, headers):
 
 def make_authorized_request(path):
     bearer_token = auth()
-    url = "https://api.twitter.com/2/{}".format(path)
+    url = "https://api.twitter.com/{}".format(path)
     print("requesting: %s" % url)
     headers = create_headers(bearer_token)
     json_response = connect_to_endpoint(url, headers)
     return json_response
-
-class PhotoTweet:
-    def __init__(self, id):
-        # get all the tweet info
-        pass
 
 class UserFactory:
     def __init__(self):
@@ -92,10 +94,7 @@ class UserFactory:
         if not ids:
             ids = [x.id for x in users]
 
-        params = {
-            'ids': ','.join(ids)
-        }
-        path = 'users?ids={}'.format(','.join(ids))
+        path = '2/users?ids={}'.format(','.join(ids))
         user_data = make_authorized_request(path)
 
         for user in user_data['data']:
@@ -117,7 +116,7 @@ class User:
             'media.fields': 'height,media_key,preview_image_url,type,url,width,public_metrics',
             'tweet.fields': 'created_at,public_metrics,text'
         }
-        path = 'users/{}/tweets?{}'.format(self.id, urllib.parse.urlencode(params))
+        path = '2/users/{}/tweets?{}'.format(self.id, urllib.parse.urlencode(params))
         tweets_json = make_authorized_request(path)
         photos = []
         media_map = None
@@ -128,13 +127,18 @@ class User:
                     for media in tweets_json['includes']['media']:
                         if media['type'] == 'photo':
                             media_map[media['media_key']] = media
+
+                photo_data = {
+                    'photos': [],
+                    'tweet': tweet
+                }
                 
                 for media_key in tweet['attachments']['media_keys']:
                     if media_key in media_map:
-                        photos.append({
-                            'photo': media_map[media_key],
-                            'tweet': tweet
-                        })
+                        photo_data['photos'].append(media_map[media_key])
+
+                if len(photo_data['photos']):
+                    photos.append(photo_data)
 
         return photos
 
@@ -143,7 +147,7 @@ class User:
             'max_results': max,
             'user.fields': 'id'
         }
-        path = 'users/{}/following?{}'.format(self.id, urllib.parse.urlencode(params))
+        path = '2/users/{}/following?{}'.format(self.id, urllib.parse.urlencode(params))
         ids_json = make_authorized_request(path)        
         if 'data' in ids_json:
             return [x['id'] for x in ids_json['data']]
@@ -187,7 +191,7 @@ class RootUser:
         print("created with %s" % self.name)
     
     def populate(self):
-        json_response = make_authorized_request('users/by?usernames={}'.format(self.name))
+        json_response = make_authorized_request('2/users/by?usernames={}'.format(self.name))
         id = json_response['data'][0]['id']
         u = User(id)
         return u
@@ -197,17 +201,6 @@ class UserGraph:
         # load the user with the name and build the graph of follow/followers out from that user
         self.users_by_id = {}
         self.follows = {}
-
-# basic idea:
-#   start at known-good user
-#   find everyone they follow
-#   for each of these users:
-#       add to users_by_id
-#       add to follows
-#       enqueue at depth for BFS
-# once we get to #depth, we can run pagerank to rank users
-#
-# then, for every user, get _n_ most recent tweets, filtered by
 
 def create_url():
     # Specify the usernames that you want to lookup below
@@ -225,11 +218,79 @@ def create_tweet_url():
     url = "https://api.twitter.com/2/tweets?ids=1410202992817496071&expansions=attachments.media_keys&media.fields=duration_ms,height,media_key,preview_image_url,public_metrics,type,url,width"
     return url
 
+def translate_to_simple(photo):
+    p = photo['photos'][0]
+    return {
+        'src': p['url'],
+        'width': p['width'],
+        'height': p['height'],
+        'key': ''.join(random.choice(string.ascii_lowercase) for i in range(10)),
+        'title': photo['tweet']['text']
+    }
+
+def get_photos_from_tweets(tweet_ids):
+    params = {
+        'ids': ','.join([str(x) for x in tweet_ids]),
+        'expansions': 'attachments.media_keys',
+        'media.fields': 'height,media_key,preview_image_url,type,url,width,public_metrics',
+        'tweet.fields': 'created_at,public_metrics,text'
+    }
+    path = '2/tweets?{}'.format(urllib.parse.urlencode(params))
+    tweets_json = make_authorized_request(path)
+    photos = []
+    media_map = None
+    for tweet in tweets_json['data']:
+        if ('attachments' in tweet) and ('media_keys' in tweet['attachments']):
+            if not media_map:
+                media_map = {}
+                for media in tweets_json['includes']['media']:
+                    if media['type'] == 'photo':
+                        media_map[media['media_key']] = media
+
+            photo_data = {
+                'photos': [],
+                'tweet': tweet
+            }
+            
+            for media_key in tweet['attachments']['media_keys']:
+                if media_key in media_map:
+                    photo_data['photos'].append(media_map[media_key])
+
+            if len(photo_data['photos']):
+                photos.append(photo_data)
+    
+    return photos
+
 def main():
     load_cache()
 
     ru = RootUser('flakphoto')
     u = ru.populate()
+
+    USER_ID = '9916402'
+    LIST_ID = '1344411611960901637'
+
+    max_id = 0
+    photo_data = []
+    while len(photo_data) < 80:
+        params = {
+            'list_id': LIST_ID,
+            'count': 100,
+            'include_entities': False,
+            'include_rts': True,
+        }
+        if max_id > 0:
+            params['max_id'] = max_id
+
+        path = "1.1/lists/statuses.json?{}".format(urllib.parse.urlencode(params))
+        res = make_authorized_request(path)
+
+        tweet_ids = [x['id'] for x in res]
+        photo_data += get_photos_from_tweets(tweet_ids)
+        max_id = min(tweet_ids)
+        print("%d, %d" % (len(photo_data), max_id))
+
+    """
 
     uf = UserFactory()
 
@@ -245,13 +306,20 @@ def main():
         photos = u.get_photos()
         for photo in photos:
             photo_data.append({
-                'photo': photo['photo'],
+                'photo': photo['photos'],
                 'tweet': photo['tweet'],
                 'user': u.data
             })
+    """
+    
+    photo_data = sorted(photo_data, key=lambda x: time.strptime(x['tweet']['created_at'], '%Y-%m-%dT%H:%M:%S.%fZ'))
 
-    f = open('photos.json', 'w')
-    json.dump(photo_data, f, indent=2)
+    f = open('my-app/src/photos.json', 'w')
+    json.dump(photo_data[:40], f, indent=2)
+
+    simple_photos = list(map(translate_to_simple, photo_data[:40]))
+    f = open('my-app/src/simple-photos.json', 'w')
+    json.dump(simple_photos, f, indent=2)
 
     save_cache()
 
