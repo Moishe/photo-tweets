@@ -38,8 +38,10 @@ def connect_to_endpoint(url, headers):
     print("url not cached: %s" % url)
     tries = 0
     MAX_TRIES = 8
-    backoff = 1
+    backoff = 15
     while tries < MAX_TRIES:
+        # this is janky, but I want to throttle responses even before we get a 429
+        time.sleep(backoff)
         response = requests.request("GET", url, headers=headers)
         if response.status_code == 200:
             cache[url] = response.json()
@@ -48,7 +50,6 @@ def connect_to_endpoint(url, headers):
         elif response.status_code == 429:
             print("Request timed out. Waiting %d second(s) to retry" % backoff)
             tries += 1
-            time.sleep(backoff)
             backoff = backoff * 2
         else:
             break
@@ -113,7 +114,8 @@ class User:
             'max_results': 100,
             'exclude' : 'retweets',
             'expansions': 'attachments.media_keys',
-            'media.fields': 'height,media_key,preview_image_url,type,url,width,public_metrics'
+            'media.fields': 'height,media_key,preview_image_url,type,url,width,public_metrics',
+            'tweet.fields': 'created_at,public_metrics,text'
         }
         path = 'users/{}/tweets?{}'.format(self.id, urllib.parse.urlencode(params))
         tweets_json = make_authorized_request(path)
@@ -129,13 +131,16 @@ class User:
                 
                 for media_key in tweet['attachments']['media_keys']:
                     if media_key in media_map:
-                        photos.append(media_map[media_key])
+                        photos.append({
+                            'photo': media_map[media_key],
+                            'tweet': tweet
+                        })
 
         return photos
 
-    def get_friend_ids(self):
+    def get_friend_ids(self, max=10):
         params = {
-            'max_results': 10,
+            'max_results': max,
             'user.fields': 'id'
         }
         path = 'users/{}/following?{}'.format(self.id, urllib.parse.urlencode(params))
@@ -148,20 +153,23 @@ class User:
 class FollowGraph:
     def __init__(self, root_user, user_factory):
         self.root_user = root_user
-        self.queue = [root_user.id]
+        self.queue = [(root_user.id, 0)]
         self.edges = {}
         self.all_ids = set()
         self.user_factory = user_factory
 
     def populate(self):
         total_processed = 0
-        while self.queue and (total_processed < 45):
+        max_depth = 2
+        while self.queue and (total_processed < 30):
             total_processed += 1
             print("%d" % total_processed)
-            u = self.user_factory.get_user(self.queue.pop())
-            friends = u.get_friend_ids()
-            self.queue += friends
+            (user_id, depth) = self.queue.pop()
+            u = self.user_factory.get_user(user_id)
+            friends = u.get_friend_ids((int)(10 / (depth + 1)))
             self.edges[u.id] = friends
+            if (depth < max_depth):
+                self.queue += zip(friends, [depth + 1] * len(friends))
 
         follower_counts = defaultdict(int)
         for friends in self.edges.values():
@@ -204,7 +212,7 @@ class UserGraph:
 def create_url():
     # Specify the usernames that you want to lookup below
     # You can enter up to 100 comma-separated values.
-    usernames = "usernames=moishelettvin"
+    usernames = "usernames=flakphoto"
     user_fields = "user.fields=description,created_at"
     # User fields are adjustable, options include:
     # created_at, description, entities, id, location, name,
@@ -220,7 +228,7 @@ def create_tweet_url():
 def main():
     load_cache()
 
-    ru = RootUser('moishelettvin')
+    ru = RootUser('flakphoto')
     u = ru.populate()
 
     uf = UserFactory()
@@ -237,7 +245,8 @@ def main():
         photos = u.get_photos()
         for photo in photos:
             photo_data.append({
-                'photo': photo,
+                'photo': photo['photo'],
+                'tweet': photo['tweet'],
                 'user': u.data
             })
 

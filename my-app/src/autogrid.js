@@ -21,7 +21,9 @@ export default function AutoGrid() {
     <div className={classes.root}>
       <Grid container spacing={3}>
         <Grid item xs>
-          <Paper className={classes.paper}>xs</Paper>
+          <Paper className={classes.paper}>
+            <img src="https://pbs.twimg.com/media/E5hvXT-XMAAIWRW.jpg" alt=""></img>
+          </Paper>
         </Grid>
         <Grid item xs>
           <Paper className={classes.paper}>xs</Paper>
