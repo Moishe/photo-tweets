@@ -1,7 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react'
 import './App.css';
-import { makeStyles } from '@material-ui/core/styles';
-import { render } from "react-dom";
 
 import Gallery from "react-photo-gallery";
 import Carousel, { Modal, ModalGateway } from "react-images";
@@ -44,10 +42,6 @@ class App extends Component {
 }
 */
 function App() {
-  const state = {
-    photos: []
-  }
-
   const [currentImage, setCurrentImage] = useState(0);
   const [viewerIsOpen, setViewerIsOpen] = useState(false);
   const [photos, setPhotos] = useState([]);
