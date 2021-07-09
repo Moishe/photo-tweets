@@ -5,54 +5,45 @@ import Gallery from "react-photo-gallery";
 import Carousel, { Modal, ModalGateway } from "react-images";
 import TextField from '@material-ui/core/TextField';
 
-// var photos = require('./photos.json');
-// var simple_photos = require('./simple-photos.json')
-/*
-class App extends Component {
-  state = {
-    photos: []
-  }
+export const useInput = initialValue => {
+  const [value, setValue] = useState(initialValue);
 
-  componentDidMount() {
-    fetch('http://127.0.0.1:5000/photos')
-    .then(res => res.json())
-    .then((data) => {
-      this.setState({ photos: data })
-    })
-    .catch(console.log)
-  }
+  return {
+    value,
+    setValue,
+    reset: () => setValue(""),
+    bind: {
+      value,
+      onChange: event => {
+        setValue(event.target.value);
+      }
+    }
+  };
+};
 
-  logit(foo) {
-    console.log(foo);
-    console.log(this);
-  }
-  
-  render() {
-      return (
-        <div className="App">
-          <form noValidate autoComplete="off">
-            <TextField id="standard-basic" label="Standard" />
-            <TextField id="filled-basic" label="Filled" variant="filled" />
-            <TextField id="outlined-basic" label="Outlined" variant="outlined" />
-          </form>
-          <Gallery photos={this.state.photos} onClick={useCallback(logit, { photo, tweeturl })}/>
-        </div>
-    ) 
-  }
-}
-*/
 function App() {
   const [currentImage, setCurrentImage] = useState(0);
   const [viewerIsOpen, setViewerIsOpen] = useState(false);
   const [photos, setPhotos] = useState([]);
 
-  useEffect(() => {
-    async function getPhotos() {
-      let response = await fetch('http://127.0.0.1:5000/photos');
-      response = await response.json();
-      setPhotos(response)
-    }
+  const { value, bind, reset } = useInput('https://twitter.com/i/lists/1344411611960901637');
 
+  const [currentUrl, setCurrentUrl] = useState('https://twitter.com/i/lists/1344411611960901637')
+
+  async function getPhotos() {
+    // let response = await fetch('http://127.0.0.1:5000/photos?url=' + encodeURI(value));
+    let response = await fetch('/photos?url=' + encodeURI(value));
+    response = await response.json();
+    setCurrentUrl(value);
+    setPhotos(response);
+  }
+
+  const reloadPhotos = (evt) => {
+    evt.preventDefault();
+    getPhotos();
+  }
+
+  useEffect(() => {
     if (photos.length === 0) {
       getPhotos();
     }
@@ -70,7 +61,22 @@ function App() {
 
   return (
     <div className="App">
-      <TextField id="standard-basic" label="Standard" />
+      <form onSubmit={reloadPhotos}>
+        <TextField
+            id="filled-full-width"
+            helperText="Paste a Twitter URL to extract its photos"
+            style={{ margin: 8 }}
+            placeholder="https://twitter.com/i/lists/1344411611960901637"
+            fullWidth
+            margin="normal"
+            InputLabelProps={{
+              shrink: true,
+            }}
+            variant="outlined"
+            {...bind}
+          />
+      </form>
+      <p>currently viewing: {currentUrl}</p>
       <Gallery photos={photos} onClick={openLightbox} />
       <ModalGateway>
         {viewerIsOpen ? (

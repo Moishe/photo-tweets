@@ -9,11 +9,11 @@ import urllib
 def translate_to_simple(photo):
   p = photo['photos'][0]
   return {
-      'src': p['url'],
-      'width': p['width'],
-      'height': p['height'],
-      'key': ''.join(random.choice(string.ascii_lowercase) for i in range(10)),
-      'title': photo['tweet']['text']
+    'src': p['url'],
+    'width': p['width'],
+    'height': p['height'],
+    'key': ''.join(random.choice(string.ascii_lowercase) for i in range(10)),
+    'title': photo['tweet']['text']
   }
   
 class TwitterPhotos:
@@ -25,37 +25,78 @@ class TwitterPhotos:
 
   def init_cache(self):
     try:
-        f = open('cache.json')
-        if f:
-            self.cache = json.load(f)
-        else:
-            print('cache file not found')
+      f = open('cache.json')
+      if f:
+        self.cache = json.load(f)
+      else:
+        print('cache file not found')
     except FileNotFoundError:
-        self.cache = {}
+      self.cache = {}
+
+  def get_photos_from_list(self):
+    max_id = 0
+    photo_data = []
+    c = 0
+    while len(photo_data) < 20 and c < 5:
+      c += 1
+      params = {
+        'list_id': self.list_id,
+        'count': 100,
+        'include_entities': False,
+        'include_rts': True,
+      }
+      if max_id > 0:
+        params['max_id'] = max_id
+
+      path = "1.1/lists/statuses.json?{}".format(urllib.parse.urlencode(params))
+      res = self.make_authorized_request(path)
+
+      tweet_ids = [x['id'] for x in res]
+      photo_data += self.get_photos_from_tweets(tweet_ids)
+      max_id = min(tweet_ids)
+
+    return photo_data
+
+  def get_photos_from_user(self):
+    path = "2/users/by/username/{}".format(self.user_name)
+    user = self.make_authorized_request(path)
+    user_id = user['data']['id']
+
+    next_token = None
+    c = 0
+    photo_data = []
+    while len(photo_data) < 20 and c < 5:
+      c += 1
+      params = {
+        'expansions': 'attachments.media_keys,author_id',
+        'media.fields': 'height,media_key,preview_image_url,type,url,width,public_metrics',
+        'tweet.fields': 'created_at,public_metrics,text',
+        'user.fields': 'username',
+        'max_results': 100
+      }
+
+      if next_token:
+        params['pagination_token'] = next_token
+
+      path = "2/users/{}/tweets?{}".format(user_id, urllib.parse.urlencode(params))
+      tweets_json = self.make_authorized_request(path)
+
+      photo_data += self.parse_photos_from_response(tweets_json)
+      next_token = tweets_json['meta']['next_token']
+
+    return photo_data
 
   def fetch_photo_tweets(self):
     self.init_cache()
 
-    max_id = 0
     photo_data = []
-    while len(photo_data) < 80:
-        params = {
-            'list_id': self.list_id,
-            'count': 100,
-            'include_entities': False,
-            'include_rts': True,
-        }
-        if max_id > 0:
-            params['max_id'] = max_id
+    if self.list_id:
+        photo_data = self.get_photos_from_list()
+    elif self.user_name:
+        photo_data = self.get_photos_from_user()
 
-        path = "1.1/lists/statuses.json?{}".format(urllib.parse.urlencode(params))
-        res = self.make_authorized_request(path, use_cache=False)
-
-        tweet_ids = [x['id'] for x in res]
-        photo_data += self.get_photos_from_tweets(tweet_ids)
-        max_id = min(tweet_ids)
-
-        photo_data = sorted(photo_data, key=lambda x: time.strptime(x['tweet']['created_at'], '%Y-%m-%dT%H:%M:%S.%fZ'))
+    photo_data = sorted(photo_data, key=lambda x: time.strptime(x['tweet']['created_at'], '%Y-%m-%dT%H:%M:%S.%fZ'))
+    photo_data.reverse()      
 
     simple_photos = []
 
@@ -84,6 +125,10 @@ class TwitterPhotos:
       }
       path = '2/tweets?{}'.format(urllib.parse.urlencode(params))
       tweets_json = self.make_authorized_request(path)
+
+      return self.parse_photos_from_response(tweets_json)
+
+  def parse_photos_from_response(self, tweets_json):
       photos = []
 
       media_map = {}
@@ -162,6 +207,6 @@ class TwitterPhotos:
       )
 
 if __name__ == "__main__":
-  js = TwitterPhotos('1344411611960901637').fetch_photo_tweets()
+  js = TwitterPhotos(user_name='moishelettvin').fetch_photo_tweets()
   print(json.dumps(js, indent=2))
     
