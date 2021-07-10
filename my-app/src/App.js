@@ -25,12 +25,11 @@ function App() {
   const [currentImage, setCurrentImage] = useState(0);
   const [viewerIsOpen, setViewerIsOpen] = useState(false);
   const [photos, setPhotos] = useState([]);
-
   const { value, bind, reset } = useInput('https://twitter.com/i/lists/1344411611960901637');
-
   const [currentUrl, setCurrentUrl] = useState('https://twitter.com/i/lists/1344411611960901637')
 
   async function getPhotos() {
+    window.location.hash = encodeURI(value);
     // let response = await fetch('http://127.0.0.1:5000/photos?url=' + encodeURI(value));
     let response = await fetch('/photos?url=' + encodeURI(value));
     response = await response.json();
