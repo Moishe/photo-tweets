@@ -1,10 +1,12 @@
 import json
 import os
 import random
+import re
 import requests
 import string
 import time
 import urllib
+from urllib.parse import urlparse, parse_qs
 
 def translate_to_simple(photo):
   p = photo['photos'][0]
@@ -17,11 +19,13 @@ def translate_to_simple(photo):
   }
   
 class TwitterPhotos:
-  def __init__(self, list_id=None, list_name=None, user_name=None):
+  def __init__(self, list_id=None, list_name=None, user_name=None, query=None):
     self.list_id = list_id
     self.list_name = list_name
     self.user_name = user_name
+    self.query = query
     self.cache = {}
+    print("Created tp obj: %s, %s, %s" % (list_name, user_name, query))
 
   def init_cache(self):
     try:
@@ -86,14 +90,42 @@ class TwitterPhotos:
 
     return photo_data
 
+  def get_photos_from_query(self):
+    next_token = None
+    c = 0
+    photo_data = []
+    while len(photo_data) < 20 and c < 5:
+      c += 1
+      params = {
+        'query': self.query,
+        'expansions': 'attachments.media_keys,author_id',
+        'media.fields': 'height,media_key,preview_image_url,type,url,width,public_metrics',
+        'tweet.fields': 'created_at,public_metrics,text',
+        'user.fields': 'username',
+        'max_results': 100
+      }
+
+      if next_token:
+        params['pagination_token'] = next_token
+
+      path = "2/tweets/search/recent?{}".format(urllib.parse.urlencode(params))
+      tweets_json = self.make_authorized_request(path)
+
+      photo_data += self.parse_photos_from_response(tweets_json)
+      next_token = tweets_json['meta']['next_token']
+
+    return photo_data
+
   def fetch_photo_tweets(self):
     self.init_cache()
 
     photo_data = []
     if self.list_id:
-        photo_data = self.get_photos_from_list()
+      photo_data = self.get_photos_from_list()
     elif self.user_name:
-        photo_data = self.get_photos_from_user()
+      photo_data = self.get_photos_from_user()
+    elif self.query:
+      photo_data = self.get_photos_from_query()
 
     photo_data = sorted(photo_data, key=lambda x: time.strptime(x['tweet']['created_at'], '%Y-%m-%dT%H:%M:%S.%fZ'))
     photo_data.reverse()      
@@ -206,7 +238,34 @@ class TwitterPhotos:
           )
       )
 
+def guess_url_stuff(url):
+  parse_result = urlparse(url)
+
+  if parse_result.path == '/search':
+    params = parse_qs(parse_result.query)
+    if (params['q']):
+      return {'query': params['q'][0]}
+
+  m = re.search('https://twitter.com/search\?.*q=([^&]+)', url)
+  if m:
+    return {'query': m.group(1)}
+
+  m = re.search('https://twitter.com/i/lists/([0-9]+)', url)
+  if m:
+    return {'list_id': m.group(1)}
+
+  m = re.search('https://twitter.com/(\w{1,15})', url)
+  if m:
+    return {'user_name': m.group(1)}
+
+  return {'list_id': '1344411611960901637'}
+
 if __name__ == "__main__":
-  js = TwitterPhotos(user_name='moishelettvin').fetch_photo_tweets()
+  url = 'https://twitter.com/search?q=%23FSBlackAndWhite&src=typeahead_click'
+  params = guess_url_stuff(url)
+
+  js = TwitterPhotos(**params).fetch_photo_tweets()
+  #js = TwitterPhotos(user_name='moishelettvin').fetch_photo_tweets()
+  #js = TwitterPhotos(query='#FSBlackAndWhite').fetch_photo_tweets()
   print(json.dumps(js, indent=2))
     
